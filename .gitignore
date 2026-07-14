@@ -1,0 +1,58 @@
+# ==========================================
+# Conway's Game of Life - .gitignore
+# ==========================================
+
+# Prerequisites / Libraries (Only ignore build artifacts, keep static libs/headers)
+# Note: we do NOT ignore deps/lib/glfw3.lib or deps/include/ since they are part of the repo dependencies.
+
+# CMake outputs and build directories
+build/
+bin/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+deps/build/
+
+# MSVC / Visual Studio files
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.suo
+*.user
+*.db
+*.opendb
+*.ipch
+*.aps
+*.pfx
+*.resources
+*.tlog
+*.recipe
+*.log
+
+# Compiled binaries and object files
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.obj
+*.o
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS-specific temporary files
+.DS_Store
+Thumbs.db
