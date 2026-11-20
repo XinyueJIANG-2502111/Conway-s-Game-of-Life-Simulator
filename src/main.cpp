@@ -2,20 +2,81 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <algorithm>
+#include <exception>
 #include <iostream>
-
-// コールバック関数の宣言
-// ウィンドウサイズが変更されたときに呼び出される関数
-void framebuffer_size_callback(GLFWwindow* window, int width, int height);
-// マウスホイールがスクロールされたときに呼び出される関数
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+#include <optional>
 
 // 画面の初期解像度設定
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 800;
 
-// グローバルなライフゲームインスタンスへのポインタ（コールバック関数用）
-Game* lifeGame = nullptr;
+namespace {
+Game& gameForWindow(GLFWwindow* window) {
+    return *static_cast<Game*>(glfwGetWindowUserPointer(window));
+}
+
+void registerInputCallbacks(GLFWwindow* window, Game& game) {
+    glfwSetWindowUserPointer(window, &game);
+    glfwSetKeyCallback(window, [](GLFWwindow* window, int key, int, int action, int) {
+        if (action != GLFW_PRESS) return;
+        if (key == GLFW_KEY_ESCAPE) {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        } else {
+            gameForWindow(window).HandleKeyPress(key);
+        }
+    });
+    glfwSetScrollCallback(window, [](GLFWwindow* window, double, double yoffset) {
+        gameForWindow(window).ProcessScroll(yoffset);
+    });
+    glfwSetMouseButtonCallback(window, [](GLFWwindow* window, int button, int action, int) {
+        gameForWindow(window).HandleMouseButton(window, button, action);
+    });
+    glfwSetCursorPosCallback(window, [](GLFWwindow* window, double x, double y) {
+        gameForWindow(window).HandleCursorPosition(window, x, y);
+    });
+    glfwSetCursorEnterCallback(window, [](GLFWwindow* window, int entered) {
+        if (!entered) gameForWindow(window).HandleCursorLeave();
+    });
+    glfwSetWindowFocusCallback(window, [](GLFWwindow* window, int focused) {
+        if (!focused) gameForWindow(window).ResetPointerPath();
+    });
+
+    const auto resetAfterResize = [](GLFWwindow* window, int, int) {
+        gameForWindow(window).ResetPointerPath();
+    };
+    glfwSetWindowSizeCallback(window, resetAfterResize);
+    glfwSetFramebufferSizeCallback(window, resetAfterResize);
+}
+
+void runGameLoop(GLFWwindow* window, Game& game) {
+    while (!glfwWindowShouldClose(window)) {
+        game.Tick();
+        glfwPollEvents();
+        if (glfwWindowShouldClose(window)) break;
+
+        int framebufferWidth, framebufferHeight;
+        glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+        const bool canRender = framebufferWidth > 0 && framebufferHeight > 0 &&
+            !glfwGetWindowAttrib(window, GLFW_ICONIFIED);
+        if (canRender) {
+            game.PaintHeldCell();
+            game.Render(framebufferWidth, framebufferHeight);
+            glfwSwapBuffers(window);
+        }
+
+        if (glfwWindowShouldClose(window)) break;
+        if (game.IsPaused()) {
+            glfwWaitEvents();
+        } else if (!canRender) {
+            // A running simulation still needs its next generation while hidden.
+            const double timeout = game.SecondsUntilNextGeneration();
+            // GLFW's Win32 wait rounds down to milliseconds.
+            if (timeout > 0.0) glfwWaitEventsTimeout(std::max(timeout, 0.001));
+        }
+    }
+}
+}
 
 int main() {
     // --- 1. GLFW の初期化 ---
@@ -37,72 +98,32 @@ int main() {
     }
     glfwMakeContextCurrent(window);
 
-    // --- 3. コールバック関数の登録 ---
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-    glfwSetScrollCallback(window, scroll_callback);
-
-    // --- 4. GLAD の初期化（OpenGL関数ポインタのロード） ---
+    // --- 3. GLAD の初期化（OpenGL関数ポインタのロード） ---
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "GLADの初期化に失敗しました。" << std::endl;
+        glfwTerminate();
         return -1;
     }
 
-    // --- 5. ゲームインスタンスの初期化 ---
-    // 100x100 のグリッドサイズでライフゲームを作成
-    lifeGame = new Game(100, 100);
-
-    // フレーム時間の計測用変数
-    float deltaTime = 0.0f;
-    float lastFrame = 0.0f;
+    // --- 4. ゲームインスタンスの初期化 ---
+    std::optional<Game> game;
+    try {
+        game.emplace(100, 100);
+    } catch (const std::exception& error) {
+        std::cerr << "Game initialization failed: " << error.what() << std::endl;
+        glfwTerminate();
+        return 1;
+    }
+    // --- 5. コールバック関数の登録 ---
+    registerInputCallbacks(window, *game);
 
     // --- 6. メインレンダリングループ ---
-    while (!glfwWindowShouldClose(window)) {
-        // 現在のフレームバッファサイズを取得
-        int scr_width, scr_height;
-        glfwGetFramebufferSize(window, &scr_width, &scr_height);
-
-        // デルタタイム（フレームの経過時間）の計算
-        float currentFrame = static_cast<float>(glfwGetTime());
-        deltaTime = currentFrame - lastFrame;
-        lastFrame = currentFrame;
-
-        // A. 入力処理
-        // ESCキーが押されたらウィンドウを閉じる
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-            glfwSetWindowShouldClose(window, true);
-
-        lifeGame->HandleInput(window);
-
-        // B. ゲームロジック（世代更新）
-        lifeGame->Update(deltaTime);
-
-        // C. レンダリングの実行
-        lifeGame->Render(scr_width, scr_height);
-
-        // カラーバッファの入れ替えとイベントのポーリング
-        glfwSwapBuffers(window);
-        glfwPollEvents();
-    }
+    runGameLoop(window, *game);
 
     // --- 7. リソースの解放とクリーンアップ ---
-    delete lifeGame;
+    game.reset();
+    glfwDestroyWindow(window);
     glfwTerminate();
 
     return 0;
-}
-
-// ---------------------------------------------------------
-// コールバック関数の実装
-// ---------------------------------------------------------
-
-// ビューポートサイズをウィンドウサイズに追従させる
-void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
-    glViewport(0, 0, width, height);
-}
-
-// マウススクロールイベントをGameクラスのカメラに伝える
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
-    if (lifeGame) {
-        lifeGame->ProcessScroll(yoffset);
-    }
 }

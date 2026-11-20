@@ -1,0 +1,6 @@
+#pragma once
+
+namespace GameShaders {
+inline constexpr char vertex[] = R"GLSL(@VERTEX_SHADER_SOURCE@)GLSL";
+inline constexpr char fragment[] = R"GLSL(@FRAGMENT_SHADER_SOURCE@)GLSL";
+}

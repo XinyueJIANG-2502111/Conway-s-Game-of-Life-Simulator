@@ -2,9 +2,6 @@
 # Conway's Game of Life - .gitignore
 # ==========================================
 
-# Prerequisites / Libraries (Only ignore build artifacts, keep static libs/headers)
-# Note: we do NOT ignore deps/lib/glfw3.lib or deps/include/ since they are part of the repo dependencies.
-
 # CMake outputs and build directories
 build/
 bin/

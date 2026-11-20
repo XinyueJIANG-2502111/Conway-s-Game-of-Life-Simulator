@@ -1,107 +1,79 @@
 #pragma once
 
 #include <glad/glad.h>
+#include <stdexcept>
 #include <string>
-#include <fstream>
-#include <sstream>
-#include <iostream>
 
-// シェーダーの読み込み、コンパイル、リンクを管理するクラス
 class Shader {
 public:
-    unsigned int ID; // シェーダープログラムのID
-
-    // コンストラクタ（頂点シェーダーとフラグメントシェーダーのパスを指定）
-    Shader(const char* vertexPath, const char* fragmentPath) {
-        std::cout << "シェーダーを読み込んでいます..." << std::endl;
-        
-        // 1. ファイルシステムからシェーダーコードを読み込む
-        std::string vertexCode;
-        std::string fragmentCode;
-        std::ifstream vShaderFile;
-        std::ifstream fShaderFile;
-
-        // 読み込み失敗時に例外を投げるように設定
-        vShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        fShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-
+    Shader(const char* vertexSource, const char* fragmentSource) {
+        GLuint vertex = Compile(GL_VERTEX_SHADER, vertexSource, "shader1.vs");
+        GLuint fragment;
         try {
-            vShaderFile.open(vertexPath);
-            fShaderFile.open(fragmentPath);
-            std::stringstream vShaderStream, fShaderStream;
-            // ファイルのバッファ内容をストリームへ読み込む
-            vShaderStream << vShaderFile.rdbuf();
-            fShaderStream << fShaderFile.rdbuf();
-            vShaderFile.close();
-            fShaderFile.close();
-            // ストリームから文字列に変換
-            vertexCode = vShaderStream.str();
-            fragmentCode = fShaderStream.str();
-        }
-        catch (std::ifstream::failure& e) {
-            std::cout << "エラー::シェーダー::ファイルの読み込みに失敗しました: " << e.what() << std::endl;
+            fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource, "shader1.fs");
+        } catch (...) {
+            glDeleteShader(vertex);
+            throw;
         }
 
-        const char* vShaderSource = vertexCode.c_str();
-        const char* fShaderSource = fragmentCode.c_str();
+        program = glCreateProgram();
+        if (program == 0) {
+            glDeleteShader(vertex);
+            glDeleteShader(fragment);
+            throw std::runtime_error("Could not create the shader program");
+        }
 
-        // 2. シェーダーのコンパイルとプログラムのリンク
-        unsigned int vertex, fragment;
-
-        // 頂点シェーダーのコンパイル
-        vertex = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertex, 1, &vShaderSource, NULL);
-        glCompileShader(vertex);
-        checkCompileErrors(vertex, "VERTEX");
-
-        // フラグメントシェーダーのコンパイル
-        fragment = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fragment, 1, &fShaderSource, NULL);
-        glCompileShader(fragment);
-        checkCompileErrors(fragment, "FRAGMENT");
-
-        // シェーダープログラムのリンク
-        ID = glCreateProgram();
-        glAttachShader(ID, vertex);
-        glAttachShader(ID, fragment);
-        glLinkProgram(ID);
-        checkCompileErrors(ID, "PROGRAM");
-
-        // リンク後は不要になった個別シェーダーオブジェクトを削除
+        glAttachShader(program, vertex);
+        glAttachShader(program, fragment);
+        glLinkProgram(program);
         glDeleteShader(vertex);
         glDeleteShader(fragment);
 
-        std::cout << "シェーダーが正常にロードされました！" << std::endl;
+        GLint linked = GL_FALSE;
+        glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        if (linked != GL_TRUE) {
+            char log[1024]{};
+            glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+            glDeleteProgram(program);
+            throw std::runtime_error(std::string("Could not link the shader program: ") + log);
+        }
     }
 
-    // シェーダープログラムのアクティブ化
+    ~Shader() {
+        glDeleteProgram(program);
+    }
+
+    Shader(const Shader&) = delete;
+    Shader& operator=(const Shader&) = delete;
+
     void use() {
-        glUseProgram(ID);
+        glUseProgram(program);
     }
 
-    // Uniformマトリクス(mat4)変数の設定用ヘルパー関数
     void setMat4(const std::string& name, const float* mat) const {
-        glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, mat);
+        glUniformMatrix4fv(glGetUniformLocation(program, name.c_str()), 1, GL_FALSE, mat);
     }
 
 private:
-    // コンパイルおよびリンクエラーのチェック用関数
-    void checkCompileErrors(unsigned int shader, std::string type) {
-        int success;
-        char infoLog[1024];
-        if (type != "PROGRAM") {
-            glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-            if (!success) {
-                glGetShaderInfoLog(shader, 1024, NULL, infoLog);
-                std::cout << "エラー::シェーダー::コンパイルエラー (タイプ: " << type << ")\n" << infoLog << "\n -- --------------------------------------------------- -- " << std::endl;
-            }
+    GLuint program;
+
+    static GLuint Compile(GLenum type, const char* source, const char* name) {
+        GLuint shader = glCreateShader(type);
+        if (shader == 0) {
+            throw std::runtime_error(std::string("Could not create ") + name);
         }
-        else {
-            glGetProgramiv(shader, GL_LINK_STATUS, &success);
-            if (!success) {
-                glGetProgramInfoLog(shader, 1024, NULL, infoLog);
-                std::cout << "エラー::プログラム::リンクエラー (タイプ: " << type << ")\n" << infoLog << "\n -- --------------------------------------------------- -- " << std::endl;
-            }
+
+        glShaderSource(shader, 1, &source, nullptr);
+        glCompileShader(shader);
+
+        GLint compiled = GL_FALSE;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+        if (compiled != GL_TRUE) {
+            char log[1024]{};
+            glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+            glDeleteShader(shader);
+            throw std::runtime_error(std::string("Could not compile ") + name + ": " + log);
         }
+        return shader;
     }
 };

@@ -3,7 +3,12 @@
 #include "Shader.hpp"
 #include "Camera.hpp"
 #include "GraphicsManager.hpp"
+#include "GameShaders.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <optional>
 #include <vector>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -16,27 +21,43 @@ public:
     Game(int width, int height);
 
     // 入力処理（キーボード、マウス入力）
-    void HandleInput(GLFWwindow* window);
+    void HandleKeyPress(int key);
+    void PaintHeldCell();
+    void HandleMouseButton(GLFWwindow* window, int button, int action);
+    void HandleCursorPosition(GLFWwindow* window, double x, double y);
+    void HandleCursorLeave();
+    void ResetPointerPath();
     // ゲーム状態の更新（世代更新）
-    void Update(float deltaTime);
+    void Tick();
+    void Update(std::chrono::nanoseconds elapsed);
+    bool IsPaused() const { return isPaused; }
+    double SecondsUntilNextGeneration() const;
     // ゲームのレンダリング
-    void Render(int screenWidth, int screenHeight);
-    // マウス左クリックによるセルの状態反転・配置
-    void HandleMouseClick(GLFWwindow* window, int screenWidth, int screenHeight);
+    void Render(int framebufferWidth, int framebufferHeight);
 
     // グリッドを全クリア
     void ClearGrid();
 
     // スクロール入力をカメラのズーム処理に伝達
-    void ProcessScroll(float yoffset) {
+    void ProcessScroll(double yoffset) {
+        if (std::isfinite(yoffset) && yoffset != 0.0) strokePoint.reset();
         camera.ProcessMouseScroll(yoffset);
     }
 
 private:
+    using Clock = std::chrono::steady_clock;
+    static constexpr float cellSpacing = 1.1f;
+
+    void PaintStroke(glm::dvec2 from, glm::dvec2 to);
+    void AdvanceGeneration();
+
     // グリッドの解像度
     int gridWidth, gridHeight;
     // 一時停止フラグ
     bool isPaused = false;
+    bool isPainting = false;
+    std::optional<glm::dvec2> cursorPosition;
+    std::optional<glm::dvec2> strokePoint;
 
     // ライフゲームの盤面データ（1次元配列で2次元盤面を表現）
     std::vector<float> currentGrid;
@@ -49,9 +70,10 @@ private:
     Camera camera;
     GraphicsManager graphics;
 
-    // 世代更新の時間間隔（秒）とタイマー
-    float updateInterval = 0.1f; // 0.1秒ごとに1世代更新
-    float timer = 0.0f;
+    static constexpr auto generationInterval = std::chrono::milliseconds(100);
+    static constexpr std::chrono::nanoseconds::rep maxGenerationsPerFrame = 5;
+    std::chrono::nanoseconds generationRemainder{};
+    Clock::time_point lastTick;
 
     // 特定のセル周囲の生存セル数をカウントするヘルパー関数
     int countNeighbors(int x, int y);
@@ -61,19 +83,18 @@ private:
 
 Game::Game(int width, int height)
     : gridWidth(width), gridHeight(height),
-    shader("Source/shaders/shader1.vs", "Source/shaders/shader1.fs"),
+    shader(GameShaders::vertex, GameShaders::fragment),
     camera(glm::vec2(0.0f, 0.0f), 0.05f) // 初期状態では全体が見えるようにカメラを引いておく
 {
     currentGrid.resize(width * height, 0.0f);
     nextGrid.resize(width * height, 0.0f);
 
     // グリッド上のセルの位置（インスタンス用オフセット）を設定
-    float spacing = 1.1f; // セル同士の間隔
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             // 中心基準のローカル座標系にマッピング
-            float posX = (x - width / 2.0f) * spacing;
-            float posY = (y - height / 2.0f) * spacing;
+            float posX = (x - width / 2.0f) * cellSpacing;
+            float posY = (y - height / 2.0f) * cellSpacing;
             cellPositions.push_back(glm::vec2(posX, posY));
 
             // 初期配置：約20%の確率でセルを生存状態（1.0）にする
@@ -83,6 +104,12 @@ Game::Game(int width, int height)
 
     // グラフィックスマネージャーの初期化（セルの基本位置データをGPUへ転送）
     graphics.Init(cellPositions);
+
+    // Blend the cells' soft edges using premultiplied alpha.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    lastTick = Clock::now();
 }
 
 // 周囲8マスの生存セル数を数える（周期的境界条件ではなく、端はクリッピング処理）
@@ -105,13 +132,32 @@ int Game::countNeighbors(int x, int y) {
 }
 
 // 世代の更新ロジック
-void Game::Update(float deltaTime) {
-    if (isPaused) { return; } // 一時停止中は更新しない
+void Game::Tick() {
+    const auto now = Clock::now();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastTick);
+    lastTick = now;
+    Update(elapsed);
+}
 
-    timer += deltaTime;
-    if (timer < updateInterval) return; // 指定時間経過するまで待機
-    timer = 0.0f;
+double Game::SecondsUntilNextGeneration() const {
+    const auto untilNextGeneration = generationInterval - generationRemainder - (Clock::now() - lastTick);
+    return std::chrono::duration<double>(untilNextGeneration).count();
+}
 
+void Game::Update(std::chrono::nanoseconds elapsed) {
+    if (isPaused) return;
+
+    // Drop excess full generations after a long frame, but keep the fractional time.
+    generationRemainder += elapsed % generationInterval;
+    const auto due = elapsed / generationInterval + generationRemainder / generationInterval;
+    generationRemainder %= generationInterval;
+    const auto generationsToRun = std::min(due, maxGenerationsPerFrame);
+    for (int step = 0; step < generationsToRun; ++step) {
+        AdvanceGeneration();
+    }
+}
+
+void Game::AdvanceGeneration() {
     for (int y = 0; y < gridHeight; ++y) {
         for (int x = 0; x < gridWidth; ++x) {
             int neighbors = countNeighbors(x, y);
@@ -128,56 +174,106 @@ void Game::Update(float deltaTime) {
         }
     }
     // 次世代を現在の盤面に反映
-    currentGrid = nextGrid;
+    currentGrid.swap(nextGrid);
 }
 
-// 入力の処理
-void Game::HandleInput(GLFWwindow* window) {
-    // マウス右ボタン：ドラッグによるカメラ的平行移動
-    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
-        double xpos, ypos;
-        glfwGetCursorPos(window, &xpos, &ypos);
-        if (!camera.isPanning) camera.StartPanning(xpos, ypos);
-        else camera.ProcessMouseMovement(xpos, ypos, 800.0f, 600.0f);
-    }
-    else {
-        camera.StopPanning();
-    }
-
-    // スペースキー：一時停止／再開の切り替え
-    static bool spaceWasPressed = false;
-    bool spaceIsPressed = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
-    if (spaceIsPressed && !spaceWasPressed) {
+void Game::HandleKeyPress(int key) {
+    if (key == GLFW_KEY_SPACE) {
+        // Account for elapsed time under the old state before changing it.
+        Tick();
         isPaused = !isPaused;
+    } else if (key == GLFW_KEY_C) {
+        ClearGrid();
     }
-    spaceWasPressed = spaceIsPressed;
+}
 
-    // マウス左クリック：セルの配置（ドロー操作）
-    // 一時停止状態でも描画ができるように入力判定を行う
-    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-        int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
-        this->HandleMouseClick(window, width, height);
+void Game::PaintHeldCell() {
+    // Keep painting the endpoint while the left button is held and the cursor is still.
+    if (strokePoint) PaintStroke(*strokePoint, *strokePoint);
+}
+
+void Game::HandleMouseButton(GLFWwindow* window, int button, int action) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        isPainting = action == GLFW_PRESS;
+        strokePoint.reset();
+    } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+        camera.StopPanning();
+    } else {
+        return;
+    }
+    if (action != GLFW_PRESS) return;
+
+    // Prefer the latest cursor event so a queued click uses that event's position.
+    glm::dvec2 cursor = cursorPosition.value_or(glm::dvec2(0.0));
+    if (!cursorPosition) glfwGetCursorPos(window, &cursor.x, &cursor.y);
+    HandleCursorPosition(window, cursor.x, cursor.y);
+}
+
+void Game::HandleCursorLeave() {
+    cursorPosition.reset();
+    strokePoint.reset();
+}
+
+void Game::ResetPointerPath() {
+    HandleCursorLeave();
+    camera.StopPanning();
+}
+
+void Game::HandleCursorPosition(GLFWwindow* window, double x, double y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) {
+        ResetPointerPath();
+        return;
+    }
+    cursorPosition = glm::dvec2(x, y);
+
+    const bool isPanning = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+    if (!isPainting && !isPanning) return;
+
+    int windowWidth, windowHeight, framebufferWidth, framebufferHeight;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    if (windowWidth <= 0 || windowHeight <= 0 || framebufferWidth <= 0 || framebufferHeight <= 0) {
+        ResetPointerPath();
+        return;
     }
 
-    // Cキー：全セルのクリア
-    static bool cWasPressed = false;
-    bool cIsPressed = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
-    if (cIsPressed && !cWasPressed) {
-        this->ClearGrid();
+    // GLFW cursor coordinates use window units. Projection uses framebuffer pixels.
+    const double aspectRatio = static_cast<double>(framebufferWidth) / framebufferHeight;
+    if (isPanning) {
+        camera.ProcessMouseMovement(*cursorPosition, glm::dvec2(windowWidth, windowHeight), aspectRatio);
     }
-    cWasPressed = cIsPressed;
+    if (!isPainting) return;
+
+    if (x < 0.0 || x >= windowWidth || y < 0.0 || y >= windowHeight) {
+        strokePoint.reset();
+        return;
+    }
+
+    const glm::dvec2 ndc(2.0 * x / windowWidth - 1.0, 1.0 - 2.0 * y / windowHeight);
+    const glm::dvec2 gridCenter(gridWidth / 2.0, gridHeight / 2.0);
+    // Offset by half a cell so the cell's integer index starts at its lower edge.
+    const glm::dvec2 point = camera.NdcToWorld(ndc, aspectRatio) / static_cast<double>(cellSpacing)
+        + gridCenter + glm::dvec2(0.5);
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) {
+        strokePoint.reset();
+        return;
+    }
+    PaintStroke(strokePoint.value_or(point), point);
+    strokePoint = point;
 }
 
 // レンダリング処理
-void Game::Render(int screenWidth, int screenHeight) {
+void Game::Render(int framebufferWidth, int framebufferHeight) {
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+
     // 画面のクリア
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     // シェーダーの使用とカメラ変換行列（MVP）の設定
     shader.use();
-    shader.setMat4("transform", glm::value_ptr(camera.GetViewMatrix((float)screenWidth, (float)screenHeight)));
+    const float aspectRatio = static_cast<float>(framebufferWidth) / framebufferHeight;
+    shader.setMat4("transform", glm::value_ptr(camera.GetViewMatrix(aspectRatio)));
 
     // 最新のセル状態をGPUバッファに転送
     graphics.UpdateStatus(currentGrid);
@@ -185,31 +281,49 @@ void Game::Render(int screenWidth, int screenHeight) {
     graphics.Draw(currentGrid.size());
 }
 
-// マウス左クリック位置からグリッド座標への逆投影処理
-void Game::HandleMouseClick(GLFWwindow* window, int screenWidth, int screenHeight) {
-    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS) {
-        double xpos, ypos;
-        glfwGetCursorPos(window, &xpos, &ypos);
+void Game::PaintStroke(glm::dvec2 from, glm::dvec2 to) {
+    if (gridWidth <= 0 || gridHeight <= 0) return;
 
-        // 1. マウスクリック位置を NDC (標準デバイス座標) に変換 (Y軸は上下反転)
-        float x_ndc = (2.0f * (float)xpos) / screenWidth - 1.0f;
-        float y_ndc = 1.0f - (2.0f * (float)ypos) / screenHeight;
+    // Clip the segment to the board before converting its endpoints to cell indices.
+    const glm::dvec2 delta = to - from;
+    double entry = 0.0, exit = 1.0;
+    auto clipAxis = [&](double origin, double direction, double limit) {
+        if (direction == 0.0) return origin >= 0.0 && origin < limit;
+        const double a = -origin / direction;
+        const double b = (limit - origin) / direction;
+        entry = std::max(entry, std::min(a, b));
+        exit = std::min(exit, std::max(a, b));
+        return entry <= exit;
+    };
+    if (!clipAxis(from.x, delta.x, gridWidth) || !clipAxis(from.y, delta.y, gridHeight)) return;
 
-        // 2. カメラのビュー行列の逆行列を使用して、ワールド座標系へ逆変換
-        float aspectRatio = (float)screenWidth / screenHeight;
-        glm::mat4 invTransform = glm::inverse(camera.GetViewMatrix(screenWidth, screenHeight));
+    auto toIndex = [](double position, int size) {
+        return static_cast<int>(std::clamp(position, 0.0, static_cast<double>(size - 1)));
+    };
+    const glm::dvec2 start = from + delta * entry;
+    const glm::dvec2 end = from + delta * exit;
+    int x = toIndex(start.x, gridWidth);
+    int y = toIndex(start.y, gridHeight);
+    const int endX = toIndex(end.x, gridWidth);
+    const int endY = toIndex(end.y, gridHeight);
 
-        // 3. ワールド座標を算出
-        glm::vec4 worldPos = invTransform * glm::vec4(x_ndc, y_ndc, 0.0f, 1.0f);
-
-        // 4. セルのワールド配置間隔からグリッドの配列インデックスに逆マッピング
-        float spacing = 1.1f;
-        int gridX = std::round(worldPos.x / spacing + gridWidth / 2.0f);
-        int gridY = std::round(worldPos.y / spacing + gridHeight / 2.0f);
-
-        // 5. グリッドの有効範囲内であればセルを生存させる
-        if (gridX >= 0 && gridX < gridWidth && gridY >= 0 && gridY < gridHeight) {
-            currentGrid[getIndex(gridX, gridY)] = 1.0f;
+    // Bresenham fills the cells between consecutive cursor samples in any direction.
+    const int dx = std::abs(endX - x);
+    const int dy = -std::abs(endY - y);
+    const int stepX = x < endX ? 1 : -1;
+    const int stepY = y < endY ? 1 : -1;
+    int error = dx + dy;
+    while (true) {
+        currentGrid[getIndex(x, y)] = 1.0f;
+        if (x == endX && y == endY) break;
+        const int twiceError = 2 * error;
+        if (twiceError >= dy) {
+            error += dy;
+            x += stepX;
+        }
+        if (twiceError <= dx) {
+            error += dx;
+            y += stepY;
         }
     }
 }
