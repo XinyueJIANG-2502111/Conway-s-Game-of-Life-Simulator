@@ -6,17 +6,20 @@
 
 class Shader {
 public:
-    Shader(const char* vertexSource, const char* fragmentSource) {
+    Shader(const char* vertexSource, const char* fragmentSource) 
+    {
         GLuint vertex = Compile(GL_VERTEX_SHADER, vertexSource, "shader1.vs");
         GLuint fragment;
+
         try {
-            fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource, "shader1.fs");
+            fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource, "shader1.fs");       
         } catch (...) {
             glDeleteShader(vertex);
             throw;
         }
 
         program = glCreateProgram();
+        
         if (program == 0) {
             glDeleteShader(vertex);
             glDeleteShader(fragment);

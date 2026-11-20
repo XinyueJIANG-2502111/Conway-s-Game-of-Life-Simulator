@@ -12,19 +12,16 @@ void main()
     if (CellStatus > 0.5)
     {
         float coverage = 1.0 - smoothstep(1.0 - edgeWidth, 1.0, radius);
-        float edgeFade = 1.0 - smoothstep(0.68, 1.0, radius);
-        float coreGlow = 1.0 - smoothstep(0.05, 0.92, radius);
+        float glow = pow(1.0 - smoothstep(0.0, 1.0, radius), 0.8);
+        float brightness = mix(0.2, 1.0, glow);
 
-        vec3 edgeColor = vec3(0.02, 0.31, 0.1775);
-        vec3 bodyColor = vec3(0.06, 0.78, 0.42);
-        vec3 coreColor = vec3(0.49, 1.00, 0.7425);
-        vec3 litCell = mix(edgeColor, bodyColor, edgeFade);
-        vec3 glowColor = mix(litCell, coreColor, coreGlow);
+        const vec3 aliveColor = vec3(0.0, 1.0, 0.6);
+        const vec3 coreColor = vec3(0.49, 1.0, 0.7425);
+        vec3 glowColor = mix(aliveColor, coreColor, glow) * brightness;
         FragColor = vec4(glowColor * coverage, coverage);
     }
     else
     {
-        // 死亡しているセル: 暗い灰色（背景に薄くグリッドが見えるような色）
-        FragColor = vec4(0.18f, 0.18f, 0.18f, 1.0f);
+        FragColor = vec4(vec3(0.05), 1.0);
     }
 }

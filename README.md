@@ -10,6 +10,8 @@ A real-time, interactive Conway's Game of Life simulator built with **C++17** an
 
 ## Features / 功能特点
 
+- Live cells appear as **glowing teal-green circles** with a slightly warmer center and a soft edge. Dead cells are dark gray.
+  存活格子显示为**青绿色的发光圆形**，中心高光略偏黄，亮度向柔和的边缘逐渐衰减。死亡格子显示为深灰色。
 - **Interactive Cell Painting**: A left-button press activates a cell immediately. Dragging fills the cells between cursor samples, so fast strokes stay connected. Releasing the button or leaving the window ends the stroke.
   **交互式细胞绘制**：按下左键立即激活格子。快速拖动时会补齐相邻光标采样之间的格子。松开左键或移出窗口会结束当前笔画。
 - **Smooth Camera Navigation**: Move around the grid with right-click drag and zoom in/out with the scroll wheel.
