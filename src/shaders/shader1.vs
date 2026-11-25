@@ -12,6 +12,7 @@ void main()
 {
     CellStatus = aStatus;
     CellLocalPosition = aPos.xy;
-    // セルの基本形状位置に配置オフセット（セルの位置座標）を加算してMVP変換を実行
+    
+    // Apply the instance offset before projecting the cell into clip space.
     gl_Position = transform * vec4(aPos.xy + aOffset, aPos.z, 1.0);
 }

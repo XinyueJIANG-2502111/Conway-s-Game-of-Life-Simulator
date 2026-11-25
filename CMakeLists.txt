@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.15)
 project(GameOfLife LANGUAGES C CXX)
 
-# C++標準を設定
+# Require C++17 for the application.
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# MSVC向けのUTF-8コンパイルオプションを設定（文字化け・ビルドエラー防止）
+# Tell MSVC to read UTF-8 source files and string literals correctly.
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-# ソースファイルとヘッダーファイルの定義
+# Sources and headers for the executable.
 set(SOURCE_FILES
     "src/main.cpp"
     "src/Camera.hpp"
@@ -20,12 +20,13 @@ set(SOURCE_FILES
     "deps/glad.c"
 )
 
-# 可実行ファイルの作成
+# Build the desktop executable.
 add_executable(GameOfLife ${SOURCE_FILES})
 
 # Embed the shaders so their source is independent of the working directory.
 set(VERTEX_SHADER_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/shader1.vs")
 set(FRAGMENT_SHADER_FILE "${CMAKE_CURRENT_SOURCE_DIR}/src/shaders/shader1.fs")
+# Regenerate the embedded sources whenever either shader changes.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${VERTEX_SHADER_FILE}" "${FRAGMENT_SHADER_FILE}")
 file(READ "${VERTEX_SHADER_FILE}" VERTEX_SHADER_SOURCE)
@@ -42,7 +43,7 @@ set_target_properties(GameOfLife PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/bin/$<CONFIG>"
 )
 
-# プラットフォームごとのリンク設定
+# Build a pinned GLFW release on Windows and use installed packages elsewhere.
 if(WIN32)
     include(FetchContent)
     if(POLICY CMP0135)
@@ -62,12 +63,13 @@ if(WIN32)
         opengl32
     )
 else()
-    # 他のプラットフォーム（Mac/Linux）でのビルドも考慮
+    # Resolve GLFW and OpenGL through their CMake targets on Linux and macOS.
     find_package(glfw3 3.4 CONFIG REQUIRED)
     find_package(OpenGL REQUIRED)
     target_link_libraries(GameOfLife PRIVATE
         glfw
         OpenGL::GL
+        # GLAD's loader calls dlopen on Unix platforms.
         ${CMAKE_DL_LIBS}
     )
 endif()

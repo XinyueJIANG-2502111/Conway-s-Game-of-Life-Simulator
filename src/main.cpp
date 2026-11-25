@@ -7,7 +7,7 @@
 #include <iostream>
 #include <optional>
 
-// 画面の初期解像度設定
+// Initial window size in screen coordinates.
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 800;
 
@@ -18,6 +18,7 @@ Game& gameForWindow(GLFWwindow* window) {
 
 void registerInputCallbacks(GLFWwindow* window, Game& game) {
     glfwSetWindowUserPointer(window, &game);
+    // Press callbacks catch inputs that begin and end during a single event poll.
     glfwSetKeyCallback(window, [](GLFWwindow* window, int key, int, int action, int) {
         if (action != GLFW_PRESS) return;
         if (key == GLFW_KEY_ESCAPE) {
@@ -42,6 +43,7 @@ void registerInputCallbacks(GLFWwindow* window, Game& game) {
         if (!focused) gameForWindow(window).ResetPointerPath();
     });
 
+    // Either size change can invalidate the cursor-to-grid mapping.
     const auto resetAfterResize = [](GLFWwindow* window, int, int) {
         gameForWindow(window).ResetPointerPath();
     };
@@ -79,33 +81,33 @@ void runGameLoop(GLFWwindow* window, Game& game) {
 }
 
 int main() {
-    // --- 1. GLFW の初期化 ---
+    // Initialize GLFW before creating the window.
     if (!glfwInit()) {
-        std::cerr << "GLFWの初期化に失敗しました。" << std::endl;
+        std::cerr << "Failed to initialize GLFW." << std::endl;
         return -1;
     }
-    // OpenGLコンテキストのバージョンとプロファイルを設定（OpenGL 3.3 Core Profile）
+    // Request the OpenGL 3.3 core context expected by the shaders.
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    // --- 2. ウィンドウの作成 ---
+    // Create the window and make its context current.
     GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Conway's Life Game - OpenGL", NULL, NULL);
     if (window == NULL) {
-        std::cerr << "GLFWウィンドウの作成に失敗しました。" << std::endl;
+        std::cerr << "Failed to create a GLFW window." << std::endl;
         glfwTerminate();
         return -1;
     }
     glfwMakeContextCurrent(window);
 
-    // --- 3. GLAD の初期化（OpenGL関数ポインタのロード） ---
+    // Load OpenGL entry points from the current context.
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        std::cerr << "GLADの初期化に失敗しました。" << std::endl;
+        std::cerr << "Failed to initialize GLAD." << std::endl;
         glfwTerminate();
         return -1;
     }
 
-    // --- 4. ゲームインスタンスの初期化 ---
+    // Initialize the simulation and its renderer.
     std::optional<Game> game;
     try {
         game.emplace(100, 100);
@@ -114,13 +116,13 @@ int main() {
         glfwTerminate();
         return 1;
     }
-    // --- 5. コールバック関数の登録 ---
+    // Register callbacks once the game instance is ready.
     registerInputCallbacks(window, *game);
 
-    // --- 6. メインレンダリングループ ---
+    // Run the simulation and render loop.
     runGameLoop(window, *game);
 
-    // --- 7. リソースの解放とクリーンアップ ---
+    // Release GPU resources before destroying the current context.
     game.reset();
     glfwDestroyWindow(window);
     glfwTerminate();

@@ -5,7 +5,7 @@
 #include <vector>
 #include "Shader.hpp"
 
-// OpenGLを利用したセルの描画（インスタンス化描画）を管理するクラス
+// Renders cells through OpenGL instancing.
 class GraphicsManager {
 public:
     GraphicsManager() : VAO(0), VBO(0), EBO(0), instanceVBO(0), statusVBO(0) {}
@@ -17,25 +17,26 @@ public:
         glDeleteBuffers(1, &statusVBO);
     }
 
-    // セルの配置位置の初期化
+    // Initialize buffers from the cell positions.
     void Init(const std::vector<glm::vec2>& positions);
 
-    // 毎フレームの各セルの生存状態をGPUにアップロード
+    // Upload each cell's live state for the frame.
     void UpdateStatus(const std::vector<float>& states);
 
-    // インスタンス化描画を実行
+    // Draw the requested number of cell instances.
     void Draw(unsigned int instanceCount);
 
 private:
     unsigned int VAO;
-    unsigned int VBO, EBO;         // 基本図形（四角形）用のバッファ
-    unsigned int instanceVBO;      // 各インスタンス（セル）の配置オフセット用のVBO
-    unsigned int statusVBO;        // 各インスタンス（セル）の生死状態用のVBO
+    unsigned int VBO, EBO;         // Shared quad vertices and indices.
+    unsigned int instanceVBO;      // One position offset per cell instance.
+    unsigned int statusVBO;        // One live state per cell instance.
 };
 
 
-void GraphicsManager::Init(const std::vector<glm::vec2>& positions) {
-    // 1. 基本となるセルの形状（1.0 x 1.0の四角形）を設定
+void GraphicsManager::Init(const std::vector<glm::vec2>& positions) 
+{
+    // Center the unit quad at the origin for radial shading in cell space.
     float vertices[] = {
          0.5f,  0.5f, 0.0f,
          0.5f, -0.5f, 0.0f,
@@ -52,7 +53,7 @@ void GraphicsManager::Init(const std::vector<glm::vec2>& positions) {
 
     glBindVertexArray(VAO);
 
-    // --- 属性レイアウト 0: セルの基本頂点座標 (インスタンス間で共通) ---
+    // Attribute 0 supplies the quad vertices shared by all cells.
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
@@ -61,32 +62,35 @@ void GraphicsManager::Init(const std::vector<glm::vec2>& positions) {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-    // --- 属性レイアウト 1: セルの配置オフセット (インスタンス間で固定の静的データ) ---
+    // Attribute 1 holds fixed cell offsets so positions only need one upload.
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
     glBufferData(GL_ARRAY_BUFFER, positions.size() * sizeof(glm::vec2), positions.data(), GL_STATIC_DRAW);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void*)0);
-    glVertexAttribDivisor(1, 1); // 1インスタンス描画するごとにデータを1つ進める設定
+    glVertexAttribDivisor(1, 1); // Advance the offset once per cell.
 
-    // --- 属性レイアウト 2: セルの生死状態 (フレームごとに変動する動的データ) ---
+    // Attribute 2 streams cell states independently of the fixed geometry.
     glBindBuffer(GL_ARRAY_BUFFER, statusVBO);
-    // 初期化時は領域確保のみ行い、データはNULL
+
+    // Allocate space here and upload the first state before drawing.
     glBufferData(GL_ARRAY_BUFFER, positions.size() * sizeof(float), nullptr, GL_STREAM_DRAW);
     glEnableVertexAttribArray(2);
     glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
-    glVertexAttribDivisor(2, 1); // 1インスタンス描画するごとにデータを1つ進める設定
+    glVertexAttribDivisor(2, 1); // Advance the state once per cell.
 
     glBindVertexArray(0);
 }
 
-void GraphicsManager::UpdateStatus(const std::vector<float>& states) {
-    // 毎フレーム、セルの生死状態データをVBOへ高速転送
+void GraphicsManager::UpdateStatus(const std::vector<float>& states) 
+{
+    // Refresh the state buffer in place for each frame.
     glBindBuffer(GL_ARRAY_BUFFER, statusVBO);
     glBufferSubData(GL_ARRAY_BUFFER, 0, states.size() * sizeof(float), states.data());
 }
 
-void GraphicsManager::Draw(unsigned int instanceCount) {
-    // インスタンス化描画の実行
+void GraphicsManager::Draw(unsigned int instanceCount) 
+{
+    // Draw all cells with a single instanced draw call.
     glBindVertexArray(VAO);
     glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0, instanceCount);
 }

@@ -14,9 +14,11 @@ public:
 
     glm::mat4 GetViewMatrix(float aspectRatio) const 
     {
-        const glm::mat4 projection = glm::ortho(-aspectRatio, aspectRatio, -1.0f, 1.0f, -1.0f, 1.0f);
+        const glm::mat4 projection = 
+            glm::ortho(-aspectRatio, aspectRatio, -1.0f, 1.0f, -1.0f, 1.0f);
 
-        glm::mat4 view = glm::scale(glm::mat4(1.0f), glm::vec3(zoom, zoom, 1.0f));
+        glm::mat4 view = 
+            glm::scale(glm::mat4(1.0f), glm::vec3(zoom, zoom, 1.0f));
 
         view = glm::translate(view, glm::vec3(position.x, position.y, 0.0f));
         
@@ -32,7 +34,8 @@ public:
         if (!std::isfinite(yoffset) || yoffset == 0.0) return;
 
         // Clamp in log space before exponentiating, even for very large scroll offsets.
-        const double logZoom = std::log(static_cast<double>(zoom)) + yoffset * std::log(1.1);
+        const double logZoom = 
+            std::log(static_cast<double>(zoom)) + yoffset * std::log(1.1);
 
         zoom = static_cast<float>(std::exp(
                 std::clamp(
@@ -46,7 +49,9 @@ public:
         {
             const glm::dvec2 delta = cursor - *lastCursor;
 
-            const glm::dvec2 ndcDelta(2.0 * delta.x / windowSize.x, -2.0 * delta.y / windowSize.y);
+            const glm::dvec2 ndcDelta(
+                2.0 * delta.x / windowSize.x, 
+                -2.0 * delta.y / windowSize.y);
 
             position += glm::vec2(NdcToViewOffset(ndcDelta, aspectRatio));
         }
@@ -66,6 +71,7 @@ private:
     float zoom;
     std::optional<glm::dvec2> lastCursor;
 
+    // Share the inverse projection scale so picking and dragging agree at any zoom.
     glm::dvec2 NdcToViewOffset(glm::dvec2 ndc, double aspectRatio) const 
     {
         return 

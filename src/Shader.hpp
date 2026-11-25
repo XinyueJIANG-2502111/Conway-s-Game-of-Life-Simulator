@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <string>
 
+// Owns one OpenGL program. Create and destroy it with a current context.
 class Shader {
 public:
     Shader(const char* vertexSource, const char* fragmentSource) 
@@ -14,13 +15,15 @@ public:
         try {
             fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource, "shader1.fs");       
         } catch (...) {
+            // A failed constructor will not run the destructor.
             glDeleteShader(vertex);
             throw;
         }
 
         program = glCreateProgram();
         
-        if (program == 0) {
+        if (program == 0) 
+        {
             glDeleteShader(vertex);
             glDeleteShader(fragment);
             throw std::runtime_error("Could not create the shader program");
@@ -29,12 +32,15 @@ public:
         glAttachShader(program, vertex);
         glAttachShader(program, fragment);
         glLinkProgram(program);
+        // Mark stage objects for deletion once the program releases them.
         glDeleteShader(vertex);
         glDeleteShader(fragment);
 
         GLint linked = GL_FALSE;
         glGetProgramiv(program, GL_LINK_STATUS, &linked);
-        if (linked != GL_TRUE) {
+
+        if (linked != GL_TRUE) 
+        {
             char log[1024]{};
             glGetProgramInfoLog(program, sizeof(log), nullptr, log);
             glDeleteProgram(program);
@@ -62,7 +68,9 @@ private:
 
     static GLuint Compile(GLenum type, const char* source, const char* name) {
         GLuint shader = glCreateShader(type);
-        if (shader == 0) {
+
+        if (shader == 0) 
+        {
             throw std::runtime_error(std::string("Could not create ") + name);
         }
 
@@ -71,12 +79,15 @@ private:
 
         GLint compiled = GL_FALSE;
         glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-        if (compiled != GL_TRUE) {
+        
+        if (compiled != GL_TRUE) 
+        {
             char log[1024]{};
             glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
             glDeleteShader(shader);
             throw std::runtime_error(std::string("Could not compile ") + name + ": " + log);
         }
+
         return shader;
     }
 };
